@@ -3,6 +3,11 @@ from .base import *  # noqa
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
+CORS_ALLOW_HEADERS = [
+    "accept", "authorization", "content-type",
+    "x-api-key", "idempotency-key",
+]
+
 # CORS — allow Next.js dev server
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",

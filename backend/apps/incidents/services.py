@@ -67,7 +67,7 @@ def ingest_event(
                     + timedelta(minutes=first_step.delay_minutes),
                     subject=f"[{service_name}] {event_type}",
                 )
-                queue = "critical" if notification.priority == Notification.PRIORITY_CRITICAL else "default"
+                queue = "critical" if notif.priority == Notification.PRIORITY_CRITICAL else "default"
                 notification_ids.append(str(notif.id))
                 transaction.on_commit(
                     lambda nid=notif.id: deliver_notification.apply_async(

@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
+/* Vendored from shadcn's dist/tailwind.css: the Tailwind v4/Turbopack resolver
+   requires a "style" export condition that shadcn's package.json doesn't
+   declare, so "shadcn/tailwind.css" can't be resolved from node_modules. */
+@import "../styles/shadcn-tailwind.css";
 
 @custom-variant dark (&:is(.dark *));
 

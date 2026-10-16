@@ -27,11 +27,9 @@ def channel_layer(settings):
         }
     }   
     channels.layers._default=None
-    # Celery eager — deliver_notification.apply() runs in-process,
-    # no worker/beat needed. Don't propagate Retry so failure-path
-    # tests can assert on DB state.
-    settings.CELERY_TASK_ALWAYS_EAGER = True
-    settings.CELERY_TASK_EAGER_PROPAGATES = False
+    # NOTE: Celery tasks invoked via .apply() execute in-process regardless.
+    # Do NOT force task_always_eager here: sweep_escalations/sweep_stuck_pending
+    # rely on apply_async NOT running inline (see test_escalation expectations).
     # NOTE: quota cache intentionally left on real Redis (REDIS_URL from
     # .env) so try_consume/get_usage exercise the real backend.
     # Guarantee SMS registry uses Textlink channel regardless of env

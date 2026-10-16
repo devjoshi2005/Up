@@ -40,6 +40,8 @@ class Notification(models.Model):
     subject = models.CharField(max_length=255, blank=True)
     body_text = models.TextField(blank=True)
     body_html = models.TextField(blank=True)
+    retry_count = models.IntegerField(default=0)
+    sweeper_requeue_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -71,9 +73,19 @@ class DeliveryAttempt(models.Model):
 class DeadLetter(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey("tenants.Tenant", on_delete=models.CASCADE)
-    notification = models.ForeignKey(Notification, on_delete=models.CASCADE)
+    notification = models.ForeignKey(
+        Notification, on_delete=models.CASCADE, related_name="dead_letters"
+    )
     reason = models.TextField()
+    last_error = models.TextField(blank=True)
+    retry_count = models.IntegerField(default=0)
+    resolved = models.BooleanField(default=False)
+    resolution_note = models.TextField(blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "dead_letters"
+        indexes = [
+            models.Index(fields=["tenant", "resolved"]),
+        ]

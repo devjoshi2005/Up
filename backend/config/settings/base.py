@@ -16,6 +16,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.notifications.tasks.sweep_escalations",
         "schedule": 30.0,           # every 30s
     },
+    "sweep-stuck-pending": {
+        "task": "apps.notifications.tasks.sweep_stuck_pending",
+        "schedule": 60.0,           # every 60s
+    },
 }
 
 
@@ -158,6 +162,8 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "apps.api.authentication.ApiKeyAuthentication",       # for ingestion
         "rest_framework_simplejwt.authentication.JWTAuthentication",  # for dashboard
+        "apps.api.authentication.ApiKeyAuthentication",
+        "apps.api.auth_jwt.TenantJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
