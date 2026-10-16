@@ -8,6 +8,17 @@ SECRET_KEY = config("DJANGO_SECRET_KEY")
 DEBUG = config("DJANGO_DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = config("DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
+PUBLIC_BASE_URL = config("PUBLIC_BASE_URL", default="http://localhost:8000")
+ACK_TOKEN_TTL_SECONDS = config("ACK_TOKEN_TTL_SECONDS", default=86400, cast=int)
+
+CELERY_BEAT_SCHEDULE = {
+    "sweep-escalations": {
+        "task": "apps.notifications.tasks.sweep_escalations",
+        "schedule": 30.0,           # every 30s
+    },
+}
+
+
 # ---------- Apps ----------
 DJANGO_APPS = [
     "django.contrib.admin",
@@ -129,9 +140,18 @@ CELERY_TASK_QUEUES = {
     "digest":   {"exchange": "digest",   "routing_key": "digest"},
 }
 CELERY_TASK_DEFAULT_QUEUE = "default"
+
+# Brevo daily quota (free tier = 300/day)
+BREVO_DAILY_QUOTA = config("BREVO_DAILY_QUOTA", default=300, cast=int)
+SMS_PROVIDER = config("SMS_PROVIDER", default="textlink")   # or "mock"
+
+# Celery routing by priority
 CELERY_TASK_ROUTES = {
-    "apps.notifications.tasks.deliver_notification": {"queue": "default"},
+    "apps.notifications.tasks.deliver_notification": {
+        "queue": "default",   # actual queue chosen at apply_async time
+    },
 }
+
 
 # ---------- DRF ----------
 REST_FRAMEWORK = {
@@ -181,3 +201,6 @@ BREVO_API_KEY = config("BREVO_API_KEY", default="")
 BREVO_SENDER_EMAIL = config("BREVO_SENDER_EMAIL", default="")
 BREVO_SENDER_NAME = config("BREVO_SENDER_NAME", default="SysFlow")
 TEXTLINK_API_KEY = config("TEXTLINK_API_KEY", default="")
+# Real receivers for integration tests / manual verification
+BREVO_EMAIL = config("BREVO_EMAIL", default="")
+TEXTLINK_DEST = config("TEXTLINK_DEST", default="")

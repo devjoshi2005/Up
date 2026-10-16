@@ -30,6 +30,11 @@ async def test_rejects_invalid_token():
 @pytest.mark.asyncio
 async def test_accepts_valid_token(recipient):
     token = mint_ws_token(recipient)
+    
+    print(token)
+    from apps.notifications.auth import verify_ws_token
+    print(verify_ws_token(token))
+
     comm = WebsocketCommunicator(application, f"/ws/notifications/?token={token}")
     connected, _ = await comm.connect()
     assert connected is True
@@ -82,8 +87,7 @@ async def test_replay_last_seen_id(recipient, tenant, policy):
     pytest.skip("needs incident fixture — will enable after Phase 4 seeds incidents")
 
 
-@pytest.mark.asyncio
-async def test_ws_token_endpoint(api_key, recipient):
+def test_ws_token_endpoint(api_key, recipient):
     c = Client()
     r = c.post(
         f"/api/v1/recipients/{recipient.id}/ws-token/",

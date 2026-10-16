@@ -2,6 +2,8 @@ import uuid
 from django.db import models
 
 
+
+
 class User(models.Model):
     """Recipient — not the Django auth user. Dashboard login uses django.contrib.auth."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -42,3 +44,13 @@ class Preference(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["user", "channel"], name="unique_user_channel"),
         ]
+class PushSubscription(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="push_subscriptions")
+    endpoint = models.URLField(max_length=500, unique=True)
+    p256dh = models.CharField(max_length=255)
+    auth = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "push_subscriptions"

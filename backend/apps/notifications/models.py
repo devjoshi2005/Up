@@ -8,12 +8,16 @@ class Notification(models.Model):
     STATUS_SENT = "SENT"
     STATUS_DELIVERED = "DELIVERED"
     STATUS_FAILED = "FAILED"
+    STATUS_ESCALATED = "ESCALATED"
+    STATUS_CANCELED = "CANCELED"
     STATUS_CHOICES = [
         (STATUS_PENDING, "Pending"),
         (STATUS_SENT, "Sent"),
         (STATUS_DELIVERED, "Delivered"),
         (STATUS_FAILED, "Failed"),
-    ]
+        (STATUS_ESCALATED, "Escalated"),
+        (STATUS_CANCELED, "Canceled"),
+    ]   
     PRIORITY_CRITICAL = "critical"
     PRIORITY_DEFAULT = "default"
     PRIORITY_DIGEST = "digest"

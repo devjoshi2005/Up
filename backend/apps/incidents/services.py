@@ -6,7 +6,7 @@ from django.utils import timezone
 from apps.incidents.models import Event, Incident
 from apps.notifications.models import Notification
 from apps.notifications.tasks import deliver_notification
-
+from apps.notifications.signing import ack_url_for
 
 def ingest_event(
     *,
@@ -42,9 +42,21 @@ def ingest_event(
 
         notification_ids: list[str] = []
         if incident_created:
+            ack_link = ack_url_for(incident.id)
+            body_text = (
+                f"Incident {incident.id} opened for {event_type} on {service_name}.\n"
+                f"Acknowledge: {ack_link}"
+            )
+            body_html = (
+                f"<p>Incident <code>{incident.id}</code> opened for "
+                f"<b>{event_type}</b> on <b>{service_name}</b>.</p>"
+                f'<p><a href="{ack_link}">Acknowledge</a></p>'
+            )
             first_step = policy.steps.order_by("step_order").first()
             if first_step and first_step.target_user:
                 notif = Notification.objects.create(
+                    body_text=body_text,
+                    body_html=body_html,
                     tenant=tenant,
                     incident=incident,
                     recipient=first_step.target_user,
@@ -54,12 +66,12 @@ def ingest_event(
                     escalation_due_at=timezone.now()
                     + timedelta(minutes=first_step.delay_minutes),
                     subject=f"[{service_name}] {event_type}",
-                    body_text=f"Incident {incident.id} opened for {event_type} on {service_name}.",
                 )
+                queue = "critical" if notification.priority == Notification.PRIORITY_CRITICAL else "default"
                 notification_ids.append(str(notif.id))
                 transaction.on_commit(
                     lambda nid=notif.id: deliver_notification.apply_async(
-                        args=[str(nid)], queue="critical"
+                        args=[str(nid)], queue=queue
                     )
                 )
 

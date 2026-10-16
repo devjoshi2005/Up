@@ -7,11 +7,51 @@ from rest_framework.views import APIView
 from apps.api.authentication import ApiKeyAuthentication
 from apps.api.serializers import EventIngestSerializer
 from apps.api.throttles import TenantRateThrottle
-from apps.incidents.models import EscalationPolicy, Event
+from apps.incidents.models import EscalationPolicy, Event,Incident
 from apps.incidents.services import ingest_event
 from apps.notifications.auth import mint_ws_token
 from apps.accounts.models import User
 
+from django.utils import timezone
+from django.db import transaction
+from rest_framework.permissions import AllowAny
+
+from apps.notifications.models import Notification
+from apps.notifications.signing import verify_ack_token
+
+
+class AckIncidentView(APIView):
+    """
+    Public endpoint (no auth) — the HMAC signature IS the auth.
+    """
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        try:
+            incident_id = verify_ack_token(token)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            try:
+                incident = Incident.objects.select_for_update().get(id=incident_id)
+            except Incident.DoesNotExist:
+                return Response({"detail": "not_found"}, status=status.HTTP_404_NOT_FOUND)
+
+            if incident.status == Incident.STATUS_RESOLVED:
+                return Response({"status": "already_resolved", "incident_id": str(incident.id)})
+
+            if incident.status != Incident.STATUS_ACKED:
+                incident.status = Incident.STATUS_ACKED
+                incident.acked_at = timezone.now()
+                incident.save(update_fields=["status", "acked_at", "updated_at"])
+
+            Notification.objects.filter(
+                incident=incident, status=Notification.STATUS_PENDING
+            ).update(status=Notification.STATUS_CANCELED, updated_at=timezone.now())
+
+        return Response({"status": "acked", "incident_id": str(incident.id)})
 
 class RecipientWsTokenView(APIView):
     """Server-to-server: SDK calls this with the API key to obtain a WS JWT for a recipient."""

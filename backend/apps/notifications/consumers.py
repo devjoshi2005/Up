@@ -31,6 +31,11 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         except TokenError:
             await self.close(code=4401)
             return
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            await self.close(code=4401)
+            return
 
         recipient = await self._get_recipient(claims["recipient_id"], claims["tenant_id"])
         if recipient is None:
