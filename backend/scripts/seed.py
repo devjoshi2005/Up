@@ -17,15 +17,25 @@ ApiKey.objects.update_or_create(
 )
 print(f"API Key (save this): {raw_key}")
 
-asha, _ = User.objects.get_or_create(
+from django.conf import settings
+
+# Real receivers from .env so escalation lands on a real inbox/phone:
+#   step 2 (SMS)   -> Asha.phone
+#   step 3 (EMAIL) -> Ravi.email
+real_phone = getattr(settings, "TEXTLINK_DEST", "") or "+919900000001"
+real_email = getattr(settings, "BREVO_EMAIL", "") or "ravi@acme.test"
+
+asha, _ = User.objects.update_or_create(
     tenant=tenant, email="asha@acme.test",
-    defaults={"name": "Asha", "phone": "+919900000001"},
+    defaults={"name": "Asha", "phone": real_phone},
 )
-ravi, _ = User.objects.get_or_create(
-    tenant=tenant, email="ravi@acme.test",
+ravi, _ = User.objects.update_or_create(
+    tenant=tenant, email=real_email,
     defaults={"name": "Ravi", "phone": "+919900000002"},
 )
 print(f"Users: {asha.id}, {ravi.id}")
+print(f"  Asha.phone (SMS dest) = {asha.phone}")
+print(f"  Ravi.email (EMAIL dest) = {ravi.email}")
 
 # Preferences
 for u in (asha, ravi):

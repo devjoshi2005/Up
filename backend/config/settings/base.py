@@ -93,7 +93,8 @@ DATABASES = {
         "HOST": config("DB_HOST"),
         "PORT": config("DB_PORT", default="6543"),
         "OPTIONS": {
-            "sslmode": "require",              # Supabase requires SSL
+            # Supabase requires SSL; local Docker Postgres sets DB_SSLMODE=disable
+            "sslmode": config("DB_SSLMODE", default="require"),
             "connect_timeout": 10,
         },
         "CONN_MAX_AGE": 60,                     # reuse connections
@@ -107,11 +108,13 @@ CELERY_BROKER_URL = config("CELERY_BROKER_URL")
 CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND")
 
 # Django cache — uses Redis DB 0
+# ssl_cert_reqs is only valid for TLS (Upstash rediss://); plain redis:// (local Docker) must not set it.
+_CACHE_OPTIONS = {"ssl_cert_reqs": None} if REDIS_URL.startswith("rediss") else {}
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": REDIS_URL,
-        "OPTIONS": {"ssl_cert_reqs": None},     # required for Upstash rediss://
+        "OPTIONS": _CACHE_OPTIONS,
         "KEY_PREFIX":"dj"
     }
 }
@@ -169,7 +172,8 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
-    "DEFAULT_THROTTLE_RATES":{"tenant":"600/min"}
+    # Overridable so load tests (k6) can raise the ceiling without touching prod.
+    "DEFAULT_THROTTLE_RATES": {"tenant": config("THROTTLE_TENANT_RATE", default="600/min")},
 }
 
 SPECTACULAR_SETTINGS = {
@@ -204,6 +208,12 @@ VAPID_PRIVATE_KEY = config("VAPID_PRIVATE_KEY", default="")
 VAPID_PUBLIC_KEY = config("VAPID_PUBLIC_KEY", default="")
 VAPID_ADMIN_EMAIL = config("VAPID_ADMIN_EMAIL", default="")
 BREVO_API_KEY = config("BREVO_API_KEY", default="")
+# "brevo" (default), "smtp" (e.g. local Mailpit), or "mock".
+# Non-brevo keeps load/chaos tests from spending provider quota.
+EMAIL_PROVIDER = config("EMAIL_PROVIDER", default="brevo")
+EMAIL_HOST = config("EMAIL_HOST", default="localhost")
+EMAIL_PORT = config("EMAIL_PORT", default=25, cast=int)
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=False, cast=bool)
 BREVO_SENDER_EMAIL = config("BREVO_SENDER_EMAIL", default="")
 BREVO_SENDER_NAME = config("BREVO_SENDER_NAME", default="SysFlow")
 TEXTLINK_API_KEY = config("TEXTLINK_API_KEY", default="")

@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    # Default max_connections=100 is tight once k6 (up to 80 VUs) + celery +
+    # daphne all hold pooled connections.
+    command: ["postgres", "-c", "max_connections=300"]
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    # Host 5432 is already used by the system PostgreSQL, so publish 5433 instead.
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "8025:8025" # Web UI
+      - "1025:1025" # SMTP
+
+  backend:
+    image: sysflow-backend:local
+    build: ./backend
+    env_file: .env.docker
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: >
+      sh -c "python manage.py migrate &&
+             daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+    healthcheck:
+      # /api/schema/ answers 401 without an API key — that still proves daphne is
+      # serving, so no `curl -f` (it would treat the 401 as a failure).
+      test: ["CMD-SHELL", "curl -sS -o /dev/null http://localhost:8000/api/schema/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  celery_worker:
+    image: sysflow-backend:local
+    build: ./backend
+    env_file: .env.docker
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: celery -A config worker -Q critical,default,digest -l info
+
+  celery_beat:
+    image: sysflow-backend:local
+    build: ./backend
+    env_file: .env.docker
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    command: celery -A config beat -l info
+
+volumes:
+  pgdata:
+  redisdata:

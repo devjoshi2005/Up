@@ -18,5 +18,5 @@ CORS_ALLOW_CREDENTIALS = True
 # Dev-only apps
 INSTALLED_APPS += ["django_extensions"] if False else []   # toggle when needed
 
-# Email — console in dev (no Brevo calls)
-EMAIL_PROVIDER = "console"
+# Email adapter is selected by EMAIL_PROVIDER (base default = "brevo").
+# Set EMAIL_PROVIDER=mock for quota-free load/chaos runs.

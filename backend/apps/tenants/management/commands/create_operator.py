@@ -20,6 +20,8 @@ class Command(BaseCommand):
             Tenant.objects.filter(name=opts["tenant_name"]).first()
             if opts["tenant_name"] else Tenant.objects.first()
         )
+        if not tenant and opts["tenant_name"]:
+            tenant = Tenant.objects.create(name=opts["tenant_name"])
         if not tenant:
             self.stderr.write("No tenant exists.")
             return
