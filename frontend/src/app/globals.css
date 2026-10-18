@@ -131,3 +131,14 @@
     @apply font-sans;
   }
 }
+
+/*
+ * Toasts: sonner hard-codes a dark-grey body (#3f3f3f) and, when its toaster is
+ * in "dark" mode, near-white (hsl(0,0%,91%)). Our toast surface is always
+ * light, so pin the text to the theme foreground — otherwise the body text can
+ * render unreadable. !important is required to beat sonner's [data-*] rules.
+ */
+[data-sonner-toast] [data-title],
+[data-sonner-toast] [data-description] {
+  color: var(--foreground) !important;
+}

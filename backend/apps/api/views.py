@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from datetime import timedelta
+import uuid
 
 from django.contrib.auth import authenticate
 from django.db.models import Count, Avg, ExpressionWrapper, F, DurationField, Q
@@ -16,6 +17,9 @@ from apps.api.serializers import (
     IncidentListSerializer, IncidentDetailSerializer,
 )
 from apps.api.auth_jwt import TenantJWTAuthentication
+from apps.api.permissions import (
+    IsTenantAdmin, IsTenantMember, IsTenantOperator, IsTenantProducer, IsTenantResponder,
+)
 from apps.incidents.models import Incident
 from apps.notifications.models import Notification
 
@@ -24,7 +28,7 @@ from apps.api.authentication import ApiKeyAuthentication
 from apps.api.serializers import DeadLetterSerializer, EventIngestSerializer
 from apps.api.throttles import TenantRateThrottle
 from apps.incidents.models import EscalationPolicy, Event,Incident
-from apps.incidents.services import ingest_event
+from apps.incidents.services import escalate_incident, ingest_event, resolve_incident
 from apps.notifications.auth import mint_ws_token
 from apps.accounts.models import User
 
@@ -32,8 +36,9 @@ from django.utils import timezone
 from django.db import transaction
 from rest_framework.permissions import AllowAny
 
+from apps.notifications.dashboard import publish_dashboard_event
 from apps.notifications.models import DeadLetter, Notification
-from apps.notifications.signing import verify_ack_token
+from apps.notifications.signing import sign_ack_token, verify_ack_token
 from apps.notifications.tasks import deliver_notification
 
 
@@ -68,6 +73,19 @@ class AckIncidentView(APIView):
                 incident=incident, status=Notification.STATUS_PENDING
             ).update(status=Notification.STATUS_CANCELED, updated_at=timezone.now())
 
+        publish_dashboard_event(
+            incident.tenant_id,
+            {
+                "kind": "incident.acked",
+                "incident": {
+                    "id": str(incident.id),
+                    "service_name": incident.service_name,
+                    "dedup_key": incident.dedup_key,
+                    "status": incident.status,
+                    "acked_at": incident.acked_at.isoformat() if incident.acked_at else None,
+                },
+            },
+        )
         return Response({"status": "acked", "incident_id": str(incident.id)})
 
 class RecipientWsTokenView(APIView):
@@ -139,8 +157,9 @@ class EventIngestView(APIView):
 
 
 class DeadLetterListView(ListAPIView):
-    authentication_classes = [ApiKeyAuthentication]
-    permission_classes = [IsAuthenticated]
+    """Dashboard only — producers (API key) have no role and cannot enumerate DLQ."""
+    authentication_classes = [TenantJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsTenantMember]
     serializer_class = DeadLetterSerializer
 
     def get_queryset(self):
@@ -151,8 +170,9 @@ class DeadLetterListView(ListAPIView):
 
 
 class DeadLetterReplayView(APIView):
-    authentication_classes = [ApiKeyAuthentication]
-    permission_classes = [IsAuthenticated]
+    """Sensitive config-ish action → admins only."""
+    authentication_classes = [TenantJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsTenantAdmin]
 
     def post(self, request, pk):
         try:
@@ -185,8 +205,9 @@ class DeadLetterReplayView(APIView):
 
 
 class DeadLetterDiscardView(APIView):
-    authentication_classes = [ApiKeyAuthentication]
-    permission_classes = [IsAuthenticated]
+    """Same sensitivity as replay → admins only."""
+    authentication_classes = [TenantJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsTenantAdmin]
 
     def post(self, request, pk):
         try:
@@ -239,7 +260,7 @@ class MeView(APIView):
 
 class IncidentListView(APIView):
     authentication_classes = [TenantJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsTenantMember]
 
     def get(self, request):
         tenant = request.user.tenant
@@ -260,7 +281,7 @@ class IncidentListView(APIView):
 
 class IncidentDetailView(APIView):
     authentication_classes = [TenantJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsTenantMember]
 
     def get(self, request, pk):
         tenant = request.user.tenant
@@ -276,9 +297,171 @@ class IncidentDetailView(APIView):
         return Response(IncidentDetailSerializer(incident).data)
 
 
+class ManualEscalateView(APIView):
+    """Responder/operator clicked "Escalate" — next policy step fires immediately."""
+    authentication_classes = [TenantJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsTenantResponder]
+
+    def post(self, request, pk):
+        incident = Incident.objects.filter(id=pk, tenant=request.user.tenant).first()
+        if not incident:
+            return Response({"detail": "not_found"}, status=404)
+
+        result = escalate_incident(incident=incident)
+        if result["status"] == "skipped":
+            return Response({"detail": result["reason"]}, status=400)
+        return Response(result)
+
+
+class ResolveIncidentView(APIView):
+    """Operator marked the fire out — RESOLVED + resolve_at (MTTR) + cancel pending."""
+    authentication_classes = [TenantJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsTenantOperator]
+
+    def post(self, request, pk):
+        incident = Incident.objects.filter(id=pk, tenant=request.user.tenant).first()
+        if not incident:
+            return Response({"detail": "not_found"}, status=404)
+
+        result = resolve_incident(incident=incident)
+        # Idempotent: resolving twice just replies "already resolved".
+        return Response(result)
+
+
+# ---------------------------------------------------------------------------
+# Demo console — lets a reviewer drive each RBAC persona from the browser.
+# These are JWT endpoints for convenience; production producers still use
+# `POST /api/v1/events/` with an `X-API-Key` (see DemoProducerView for the
+# snippet). The responder path still acks through the *real* HMAC magic link,
+# so that transport is exercised end to end.
+# ---------------------------------------------------------------------------
+
+
+class DemoProducerView(APIView):
+    """Producer console: the policies this tenant can fire against."""
+    authentication_classes = [TenantJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsTenantProducer]
+
+    def get(self, request):
+        policies = EscalationPolicy.objects.filter(tenant=request.user.tenant).order_by("name")
+        return Response({
+            "policies": [
+                {
+                    "id": str(p.id),
+                    "name": p.name,
+                    "steps": [
+                        {
+                            "step_order": s.step_order,
+                            "channel": s.channel,
+                            "delay_minutes": s.delay_minutes,
+                            "target": (s.target_user.email or s.target_user.name)
+                            if s.target_user else None,
+                        }
+                        for s in p.steps.order_by("step_order")
+                    ],
+                }
+                for p in policies
+            ],
+            # The raw key is shown only once at creation, so we surface the real
+            # integration shape rather than a key we no longer hold.
+            "example_curl": (
+                "curl -X POST http://localhost:8000/api/v1/events/ \\\n"
+                "  -H 'X-API-Key: $SYSFLOW_API_KEY' \\\n"
+                "  -H 'Idempotency-Key: $(uuidgen)' \\\n"
+                "  -H 'Content-Type: application/json' \\\n"
+                "  -d '{\"service_name\":\"payments-service\","
+                "\"event_type\":\"payment_failed\",\"policy_id\":\"<policy-id>\"}'"
+            ),
+        })
+
+
+class DemoProduceView(APIView):
+    """Producer console: emit an event into the exact same pipeline as /events/."""
+    authentication_classes = [TenantJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsTenantProducer]
+
+    def post(self, request):
+        tenant = request.user.tenant
+        service_name = (request.data.get("service_name") or "").strip()
+        event_type = (request.data.get("event_type") or "").strip()
+        if not service_name or not event_type:
+            return Response(
+                {"detail": "service_name and event_type are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        policy_id = request.data.get("policy_id")
+        policies = EscalationPolicy.objects.filter(tenant=tenant)
+        policy = policies.filter(id=policy_id).first() if policy_id else policies.first()
+        if not policy:
+            return Response(
+                {"detail": "No escalation policy for this tenant."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        dedup_key = (request.data.get("dedup_key") or "").strip() or f"{service_name}:{event_type}"
+
+        try:
+            result = ingest_event(
+                tenant=tenant,
+                policy=policy,
+                idempotency_key=str(uuid.uuid4()),
+                dedup_key=dedup_key,
+                service_name=service_name,
+                event_type=event_type,
+                payload={"event_type": event_type, "source": "demo-console"},
+            )
+        except IntegrityError:
+            return Response({"detail": "duplicate_event"}, status=status.HTTP_409_CONFLICT)
+
+        return Response(
+            {**result, "policy_name": policy.name},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class DemoInboxView(APIView):
+    """Responder console: open fires awaiting an ack, with the real magic link."""
+    authentication_classes = [TenantJWTAuthentication]
+    permission_classes = [IsAuthenticated, IsTenantResponder]
+
+    def get(self, request):
+        tenant = request.user.tenant
+        incidents = (
+            Incident.objects.filter(tenant=tenant, status=Incident.STATUS_OPEN)
+            .select_related("policy")
+            .prefetch_related("notifications__recipient", "notifications__escalation_step")
+            .order_by("-created_at")[:50]
+        )
+
+        rows = []
+        for inc in incidents:
+            pending = [n for n in inc.notifications.all() if n.status == Notification.STATUS_PENDING]
+            rows.append({
+                "incident_id": str(inc.id),
+                "service_name": inc.service_name,
+                "dedup_key": inc.dedup_key,
+                "status": inc.status,
+                "policy_name": inc.policy.name,
+                "created_at": inc.created_at.isoformat(),
+                "ack_token": sign_ack_token(str(inc.id)),
+                "pending": [
+                    {
+                        "id": str(n.id),
+                        "channel": n.channel,
+                        "step_order": n.escalation_step.step_order if n.escalation_step else None,
+                        "recipient": (n.recipient.email or n.recipient.name) if n.recipient else None,
+                        "escalation_due_at": n.escalation_due_at.isoformat() if n.escalation_due_at else None,
+                    }
+                    for n in pending
+                ],
+            })
+        return Response(rows)
+
+
 class AnalyticsView(APIView):
     authentication_classes = [TenantJWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsTenantMember]
 
     def get(self, request):
         tenant = request.user.tenant

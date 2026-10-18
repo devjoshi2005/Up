@@ -9,7 +9,7 @@ import pytest
 
 from apps.accounts.models import User
 from apps.incidents.models import EscalationPolicy, EscalationStep
-from apps.tenants.models import ApiKey, Tenant
+from apps.tenants.models import API_KEY_PREFIX_LEN, ApiKey, Tenant
 
 
 RAW_KEY = "sk_live_testkey0000000000000000000"
@@ -18,6 +18,68 @@ RAW_KEY = "sk_live_testkey0000000000000000000"
 @pytest.fixture
 def tenant(db):
     return Tenant.objects.create(name="Test Co")
+
+
+# ---------- Dashboard members (RBAC) ----------
+#
+# Dashboard calls authenticate via JWT → _JWPrincipal carries the TenantMember
+# role; API-key producers carry no role and are shut out by the permission
+# classes. Helpers below create an auth user + membership and mint a Bearer.
+
+def _auth_member(tenant, role, email, password="pw12345!"):
+    # get_user_model() needs live settings, so resolve lazily.
+    from django.contrib.auth import get_user_model
+    from apps.tenants.models import TenantMember
+
+    user = get_user_model().objects.create_user(username=email, email=email,
+                                                password=password)
+    member = TenantMember.objects.create(user=user, tenant=tenant, role=role)
+    return user, member
+
+
+def _jwt_headers(user):
+    from rest_framework_simplejwt.tokens import RefreshToken
+    return {"HTTP_AUTHORIZATION": f"Bearer {RefreshToken.for_user(user).access_token}"}
+
+
+@pytest.fixture
+def make_member(tenant):
+    """Creates an auth user (with TenantMember role) and returns the *user* —
+    never the member row, since JWT must be minted for the auth user's pk."""
+    def _make(role="admin", email=None, password="pw12345!"):
+        user, _member = _auth_member(tenant, role, email or f"{role}@test.io", password)
+        return user
+    return _make
+
+
+@pytest.fixture
+def member_admin(make_member):
+    return make_member(role="admin")
+
+
+@pytest.fixture
+def member_operator(make_member):
+    return make_member(role="operator")
+
+
+@pytest.fixture
+def member_viewer(make_member):
+    return make_member(role="viewer")
+
+
+@pytest.fixture
+def member_producer(make_member):
+    return make_member(role="producer")
+
+
+@pytest.fixture
+def member_responder(make_member):
+    return make_member(role="responder")
+
+
+@pytest.fixture
+def jwt_for():
+    return _jwt_headers
 
 @pytest.fixture(autouse=True)
 def channel_layer(settings):
@@ -42,7 +104,7 @@ def channel_layer(settings):
 def api_key(tenant):
     return ApiKey.objects.create(
         tenant=tenant,
-        prefix=RAW_KEY[:8],
+        prefix=RAW_KEY[:API_KEY_PREFIX_LEN],
         hash=hashlib.sha256(RAW_KEY.encode()).hexdigest(),
         is_active=True,
     )

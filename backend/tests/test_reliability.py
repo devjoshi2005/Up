@@ -110,19 +110,21 @@ def test_sweep_dlq_after_max_requeues(tenant, policy, recipient):
     assert DeadLetter.objects.filter(notification=n, reason="stuck_pending_max_requeues").exists()
 
 
-# ---- DLQ endpoints ----
+# ---- DLQ endpoints (RBAC: dashboard JWT only; replay/discard = admins) ----
 
-def test_dlq_list_returns_only_tenant(client, tenant, policy, recipient, api_key):
+def test_dlq_list_returns_only_tenant(client, tenant, policy, recipient, member_admin, jwt_for):
+    admin = member_admin
     n = _notif(tenant, policy, recipient)
     DeadLetter.objects.create(
         tenant=tenant, notification=n, reason="x", last_error="e",
     )
-    r = client.get("/api/v1/dlq/", HTTP_X_API_KEY="sk_live_testkey0000000000000000000")
+    r = client.get("/api/v1/dlq/", **jwt_for(admin))
     assert r.status_code == 200
     assert len(r.json()["results"]) == 1
 
 
-def test_dlq_replay(client, tenant, policy, recipient, api_key):
+def test_dlq_replay(client, tenant, policy, recipient, member_admin, jwt_for):
+    admin = member_admin
     n = _notif(tenant, policy, recipient)
     n.status = Notification.STATUS_FAILED
     n.save()
@@ -130,10 +132,7 @@ def test_dlq_replay(client, tenant, policy, recipient, api_key):
         tenant=tenant, notification=n, reason="test", last_error="e",
     )
     with patch("apps.api.views.deliver_notification.apply_async") as mp:
-        r = client.post(
-            f"/api/v1/dlq/{dl.id}/replay/",
-            HTTP_X_API_KEY="sk_live_testkey0000000000000000000",
-        )
+        r = client.post(f"/api/v1/dlq/{dl.id}/replay/", **jwt_for(admin))
     assert r.status_code == 200
     assert r.json()["status"] == "requeued"
     mp.assert_called_once()
@@ -143,29 +142,37 @@ def test_dlq_replay(client, tenant, policy, recipient, api_key):
     assert n.status == Notification.STATUS_PENDING
 
 
-def test_dlq_replay_rejects_already_resolved(client, tenant, policy, recipient, api_key):
+def test_dlq_replay_rejects_already_resolved(client, tenant, policy, recipient, member_admin, jwt_for):
+    admin = member_admin
     n = _notif(tenant, policy, recipient)
     dl = DeadLetter.objects.create(
         tenant=tenant, notification=n, reason="test", resolved=True,
         resolved_at=timezone.now(),
     )
-    r = client.post(
-        f"/api/v1/dlq/{dl.id}/replay/",
-        HTTP_X_API_KEY="sk_live_testkey0000000000000000000",
-    )
+    r = client.post(f"/api/v1/dlq/{dl.id}/replay/", **jwt_for(admin))
     assert r.status_code == 400
 
 
-def test_dlq_discard(client, tenant, policy, recipient, api_key):
+def test_dlq_discard(client, tenant, policy, recipient, member_admin, jwt_for):
+    admin = member_admin
     n = _notif(tenant, policy, recipient)
     dl = DeadLetter.objects.create(tenant=tenant, notification=n, reason="x")
     r = client.post(
-        f"/api/v1/dlq/{dl.id}/discard/",
-        {"note": "customer cancelled"},
-        content_type="application/json",
-        HTTP_X_API_KEY="sk_live_testkey0000000000000000000",
+        f"/api/v1/dlq/{dl.id}/discard/", {"note": "customer cancelled"},
+        content_type="application/json", **jwt_for(admin),
     )
     assert r.status_code == 200
     dl.refresh_from_db()
     assert dl.resolved is True
     assert dl.resolution_note == "customer cancelled"
+
+
+# Producers authenticate with an API key and have no role — RBAC (by design)
+# keeps them out of every dashboard surface, including read-only DLQ.
+def test_dlq_producer_api_key_rejected(client, tenant, policy, recipient, api_key):
+    n = _notif(tenant, policy, recipient)
+    DeadLetter.objects.create(
+        tenant=tenant, notification=n, reason="x", last_error="e",
+    )
+    r = client.get("/api/v1/dlq/", HTTP_X_API_KEY="sk_live_testkey0000000000000000000")
+    assert r.status_code == 401

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 
@@ -17,9 +17,17 @@ const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444"];
 export default function AnalyticsPage() {
   const [data, setData] = useState<Analytics | null>(null);
   const [days, setDays] = useState(7);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { api.get(`/analytics/?days=${days}`).then((r) => setData(r.data)); }, [days]);
+  useEffect(() => {
+    api.get(`/analytics/?days=${days}`)
+      .then((r) => { setData(r.data); setError(null); })
+      .catch((err) => setError(apiErrorMessage(err, "analytics")));
+  }, [days]);
 
+  if (error) {
+    return <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">{error}</p>;
+  }
   if (!data) return <p className="text-slate-500">Loading…</p>;
 
   return (

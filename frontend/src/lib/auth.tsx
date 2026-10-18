@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { api, clearTokens, setTokens } from "./api";
 
 type Me = { id: string; email: string; tenant_id: string; tenant_name: string; role: string };
-type Ctx = { me: Me | null; loading: boolean; login: (e: string, p: string) => Promise<void>; logout: () => void };
+type Ctx = { me: Me | null; loading: boolean; login: (e: string, p: string) => Promise<Me>; logout: () => void };
 
 const AuthContext = createContext<Ctx | null>(null);
 
@@ -45,6 +45,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setTokens(r.data.access, r.data.refresh);
     const me = await api.get<Me>("/auth/me/");
     setMe(me.data);
+    return me.data;
   };
 
   const logout = () => { clearTokens(); setMe(null); };

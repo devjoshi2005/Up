@@ -4,7 +4,9 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from apps.api.views import (
     AckIncidentView, EventIngestView, RecipientWsTokenView,
     DeadLetterListView, DeadLetterReplayView, DeadLetterDiscardView,
-    LoginView, MeView, IncidentListView, IncidentDetailView, AnalyticsView,
+    LoginView, MeView, IncidentListView, IncidentDetailView,
+    ManualEscalateView, ResolveIncidentView, AnalyticsView,
+    DemoProducerView, DemoProduceView, DemoInboxView,
 )
 
 urlpatterns = [
@@ -27,5 +29,12 @@ urlpatterns = [
     path("auth/me/", MeView.as_view(), name="me"),
     path("incidents/", IncidentListView.as_view(), name="incidents"),
     path("incidents/<uuid:pk>/", IncidentDetailView.as_view(), name="incident-detail"),
+    path("incidents/<uuid:pk>/escalate/", ManualEscalateView.as_view(), name="incident-escalate"),
+    path("incidents/<uuid:pk>/resolve/", ResolveIncidentView.as_view(), name="incident-resolve"),
     path("analytics/", AnalyticsView.as_view(), name="analytics"),
+
+    # Demo console (RBAC personas)
+    path("demo/producer/", DemoProducerView.as_view(), name="demo-producer"),
+    path("demo/produce/", DemoProduceView.as_view(), name="demo-produce"),
+    path("demo/inbox/", DemoInboxView.as_view(), name="demo-inbox"),
 ]

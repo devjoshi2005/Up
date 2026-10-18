@@ -28,7 +28,9 @@ class Notification(models.Model):
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey("tenants.Tenant", on_delete=models.CASCADE)
-    incident = models.ForeignKey("incidents.Incident", on_delete=models.CASCADE)
+    incident = models.ForeignKey(
+        "incidents.Incident", on_delete=models.CASCADE, related_name="notifications"
+    )
     recipient = models.ForeignKey("accounts.User", on_delete=models.CASCADE)
     channel = models.CharField(max_length=50)
     status = models.CharField(max_length=50, choices=STATUS_CHOICES, default=STATUS_PENDING)

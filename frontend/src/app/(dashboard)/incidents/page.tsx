@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, apiErrorMessage } from "@/lib/api";
+import { useTenantSocket } from "@/lib/ws";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatusBadge } from "../page";
@@ -11,11 +12,20 @@ type Incident = { id: string; dedup_key: string; service_name: string; status: s
 export default function IncidentsPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [status, setStatus] = useState("ALL");
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     const params = status === "ALL" ? "" : `?status=${status}`;
-    api.get(`/incidents/${params}`).then((r) => setIncidents(r.data));
+    api.get(`/incidents/${params}`)
+      .then((r) => { setIncidents(r.data); setError(null); })
+      .catch((err) => setError(apiErrorMessage(err, "incidents")));
   }, [status]);
+
+  useEffect(load, [load]);
+
+  useTenantSocket((e) => {
+    if (e.kind.startsWith("incident.")) load();
+  });
 
   return (
     <div className="space-y-6">
@@ -31,6 +41,12 @@ export default function IncidentsPage() {
           </SelectContent>
         </Select>
       </div>
+
+      {error && (
+        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+          {error}
+        </p>
+      )}
 
       <Card>
         <CardHeader><CardTitle>All incidents</CardTitle></CardHeader>

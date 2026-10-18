@@ -1,6 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+import { toast } from "sonner";
+import { api, apiErrorMessage } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { canReplayDlq } from "@/lib/roles";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,33 +15,61 @@ type DL = {
 };
 
 export default function DlqPage() {
+  const { me } = useAuth();
   const [rows, setRows] = useState<DL[]>([]);
   const [showResolved, setShowResolved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const canManage = canReplayDlq(me?.role);
 
   const load = () => {
     const params = showResolved ? "" : "?resolved=false";
-    api.get(`/dlq/${params}`).then((r) => setRows(r.data.results ?? r.data));
+    api.get(`/dlq/${params}`)
+      .then((r) => { setRows(r.data.results ?? r.data); setError(null); })
+      .catch((err) => setError(apiErrorMessage(err, "the dead-letter queue")));
   };
 
   useEffect(load, [showResolved]);
 
   const replay = async (id: string) => {
-    await api.post(`/dlq/${id}/replay/`);
-    load();
+    try {
+      await api.post(`/dlq/${id}/replay/`);
+      toast.success("Requeued", { description: "Delivery task re-dispatched." });
+      load();
+    } catch {
+      toast.error("Replay failed", { description: "Admins only." });
+    }
   };
   const discard = async (id: string) => {
-    await api.post(`/dlq/${id}/discard/`, { note: "discarded from UI" });
-    load();
+    try {
+      await api.post(`/dlq/${id}/discard/`, { note: "discarded from UI" });
+      toast.success("Discarded");
+      load();
+    } catch {
+      toast.error("Discard failed", { description: "Admins only." });
+    }
   };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Dead Letters</h1>
-        <Button variant="outline" size="sm" onClick={() => setShowResolved((s) => !s)}>
-          {showResolved ? "Show unresolved" : "Show all"}
-        </Button>
+        <div className="flex items-center gap-3">
+          {!canManage && (
+            <span className="text-xs text-slate-400" title="Replay/discard requires the admin role">
+              View-only ({me?.role})
+            </span>
+          )}
+          <Button variant="outline" size="sm" onClick={() => setShowResolved((s) => !s)}>
+            {showResolved ? "Show unresolved" : "Show all"}
+          </Button>
+        </div>
       </div>
+
+      {error && (
+        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+          {error}
+        </p>
+      )}
 
       <Card>
         <CardHeader><CardTitle>Queue</CardTitle></CardHeader>
@@ -70,7 +101,7 @@ export default function DlqPage() {
                       : <Badge variant="destructive">unresolved</Badge>}
                   </td>
                   <td className="py-3 text-right space-x-2">
-                    {!r.resolved && (
+                    {!r.resolved && canManage && (
                       <>
                         <Button size="sm" variant="outline" onClick={() => replay(r.id)}>Replay</Button>
                         <Button size="sm" variant="ghost" onClick={() => discard(r.id)}>Discard</Button>

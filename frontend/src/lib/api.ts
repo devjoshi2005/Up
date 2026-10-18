@@ -24,6 +24,27 @@ export function clearTokens() {
   localStorage.removeItem("refresh");
 }
 
+/**
+ * Turn an axios failure into something a human can act on. Unhandled promise
+ * rejections in the dev overlay are useless for debugging; a rendered message
+ * beats a stack trace.
+ */
+export function apiErrorMessage(err: unknown, what = "data"): string {
+  const e = err as {
+    response?: { status?: number; data?: { detail?: string } };
+  };
+  const status = e?.response?.status;
+  const detail = e?.response?.data?.detail;
+
+  if (status === 401 || status === 403) return `Your role can't load ${what} (HTTP ${status}).`;
+  if (status === 404) {
+    return `Couldn't find the endpoint for ${what} (404). If you just pulled new code, restart the backend — daphne caches the URL map at boot.`;
+  }
+  if (detail) return `Couldn't load ${what}: ${detail}.`;
+  if (status) return `Couldn't load ${what} (HTTP ${status}).`;
+  return `Couldn't reach the backend — is daphne running on ${BASE}?`;
+}
+
 function redirectToLogin() {
   if (typeof window === "undefined") return;
   // Absolute URL keeps this out of the "relative destination" lint rule; the

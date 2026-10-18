@@ -4,7 +4,7 @@ import secrets
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 
-from apps.tenants.models import ApiKey
+from apps.tenants.models import API_KEY_PREFIX_LEN, ApiKey
 
 
 class TenantPrincipal:
@@ -35,18 +35,24 @@ class ApiKeyAuthentication(BaseAuthentication):
         if not raw_key.startswith(self.REQUIRED_PREFIX) or len(raw_key) < 16:
             raise AuthenticationFailed("Malformed API key.")
 
-        prefix = raw_key[:8]
+        prefix = raw_key[:API_KEY_PREFIX_LEN]
         key_hash = hashlib.sha256(raw_key.encode()).hexdigest()
 
-        try:
-            api_key = ApiKey.objects.select_related("tenant").get(
-                prefix=prefix, is_active=True
+        # Try the unique lookup prefix first, then the legacy 8-char scheme
+        # bucket (old keys stored just "sk_live_"). The prefix is only a lookup
+        # handle — the sha256 hash comparison is the real check, and it's
+        # constant-time. Never `.get()` here: a prefix bucket can hold >1 row.
+        prefixes = [prefix]
+        if self.REQUIRED_PREFIX not in prefixes:
+            prefixes.append(self.REQUIRED_PREFIX)
+
+        for p in prefixes:
+            candidates = ApiKey.objects.select_related("tenant").filter(
+                prefix=p, is_active=True
             )
-        except ApiKey.DoesNotExist:
-            raise AuthenticationFailed("Invalid API key.")
+            for api_key in candidates:
+                if secrets.compare_digest(api_key.hash, key_hash):
+                    return (TenantPrincipal(api_key.tenant), api_key)
 
-        if not secrets.compare_digest(api_key.hash, key_hash):
-            raise AuthenticationFailed("Invalid API key.")
-
-        return (TenantPrincipal(api_key.tenant), api_key)
+        raise AuthenticationFailed("Invalid API key.")
           

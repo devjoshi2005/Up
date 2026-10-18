@@ -1,10 +1,14 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { api } from "@/lib/api";
+import { toast } from "sonner";
+import { api, apiErrorMessage } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { canEscalate, canResolve } from "@/lib/roles";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { StatusBadge } from "../../page";
-import { CircleDot, CheckCircle2, XCircle, Clock, AlertTriangle } from "lucide-react";
+import { CircleDot, CheckCircle2, XCircle, Clock, AlertTriangle, ArrowUpRight, CheckCheck } from "lucide-react";
 
 type Attempt = { id: string; channel: string; status: string; provider_response: string; latency_ms: number | null; attempted_at: string };
 type Notification = {
@@ -22,31 +26,108 @@ type Incident = {
 
 export default function IncidentDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { me } = useAuth();
   const [incident, setIncident] = useState<Incident | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!id) return;
-    api.get(`/incidents/${id}/`).then((r) => setIncident(r.data));
+    api.get(`/incidents/${id}/`)
+      .then((r) => { setIncident(r.data); setError(null); })
+      .catch((err) => setError(apiErrorMessage(err, "this incident")));
   }, [id]);
 
+  useEffect(load, [load]);
+
+  const escalate = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/incidents/${id}/escalate/`);
+      toast.success(`Escalated to ${r.data.channel}`, {
+        description: `Step ${r.data.step_order} dispatched immediately.`,
+      });
+      load();
+    } catch (e) {
+      const detail =
+        (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      toast.error("Could not escalate", { description: detail ?? "Unexpected error" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resolve = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/incidents/${id}/resolve/`);
+      toast.success("Incident resolved", { description: "Pending escalations canceled." });
+      load();
+    } catch {
+      toast.error("Could not resolve incident");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (error) {
+    return <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">{error}</p>;
+  }
   if (!incident) return <p className="text-slate-500">Loading…</p>;
 
   const ordered = [...incident.notifications].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
+  const canEsc = canEscalate(me?.role);
+  const canRes = canResolve(me?.role);
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">{incident.service_name}</h1>
-        <p className="text-sm text-slate-500">{incident.dedup_key}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold">{incident.service_name}</h1>
+          <p className="text-sm text-slate-500">{incident.dedup_key}</p>
+        </div>
+        {canEsc || canRes ? (
+          <div className="flex items-center gap-2 shrink-0">
+            {canEsc && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || incident.status !== "OPEN"}
+                onClick={escalate}
+                title={
+                  incident.status === "OPEN"
+                    ? "Fire the next escalation step now"
+                    : "Only open incidents can be escalated"
+                }
+              >
+                <ArrowUpRight className="w-4 h-4 mr-1" /> Escalate now
+              </Button>
+            )}
+            {canRes && (
+              <Button
+                size="sm"
+                disabled={busy || incident.status === "RESOLVED"}
+                onClick={resolve}
+              >
+                <CheckCheck className="w-4 h-4 mr-1" /> Resolve
+              </Button>
+            )}
+          </div>
+        ) : (
+          <span className="text-xs text-slate-400 shrink-0" title="Your role is read-only">
+            Read-only ({me?.role})
+          </span>
+        )}
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-5 gap-4">
         <InfoTile label="Status" value={<StatusBadge status={incident.status} />} />
         <InfoTile label="Policy" value={incident.policy_name} />
         <InfoTile label="Opened" value={new Date(incident.created_at).toLocaleString()} />
         <InfoTile label="Acked" value={incident.acked_at ? new Date(incident.acked_at).toLocaleString() : "—"} />
+        <InfoTile label="Resolved" value={incident.resolved_at ? new Date(incident.resolved_at).toLocaleString() : "—"} />
       </div>
 
       <Card>

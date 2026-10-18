@@ -4,6 +4,7 @@ from celery import shared_task
 from django.utils import timezone
 
 from apps.notifications.channels import CHANNEL_REGISTRY
+from apps.notifications.dashboard import publish_dashboard_event
 from apps.notifications.models import DeadLetter, DeliveryAttempt, Notification
 from apps.notifications.quota import try_consume
 from apps.notifications.quiet_hours import is_within_quiet_hours
@@ -46,6 +47,23 @@ def _dead_letter(notification, reason: str, error: str = "", retries: int = 0):
         reason=reason,
         last_error=error[:2000],
         retry_count=retries,
+    )
+
+
+def _publish_notification(notification, latency_ms=None):
+    publish_dashboard_event(
+        notification.tenant_id,
+        {
+            "kind": "notification.updated",
+            "notification": {
+                "id": str(notification.id),
+                "incident_id": str(notification.incident_id),
+                "channel": notification.channel,
+                "status": notification.status,
+                "subject": notification.subject,
+                "latency_ms": latency_ms,
+            },
+        },
     )
 
 
@@ -108,6 +126,7 @@ def deliver_notification(self, notification_id: str):
         notification.status = Notification.STATUS_SENT
         notification.retry_count = self.request.retries
         notification.save(update_fields=["status", "retry_count", "updated_at"])
+        _publish_notification(notification, latency_ms=latency_ms)
         return {"status": "sent", "channel": notification.channel, "latency_ms": latency_ms}
 
     # Failure path
@@ -117,6 +136,7 @@ def deliver_notification(self, notification_id: str):
         notification.status = Notification.STATUS_FAILED
         notification.retry_count = self.request.retries
         notification.save(update_fields=["status", "retry_count", "updated_at"])
+        _publish_notification(notification, latency_ms=latency_ms)
         return {"status": "dlq", "reason": result.get("error")}
 
     notification.retry_count = self.request.retries + 1

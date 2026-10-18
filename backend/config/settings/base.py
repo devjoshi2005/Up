@@ -125,11 +125,23 @@ CACHES = {
 }
 
 # Channels layer — WebSocket fan-out via Redis
+#
+# channels_redis blocks on BZPOPMIN for `brpop_timeout` (5s, hard-coded) when a
+# consumer is idle. redis-py 8 sets a default socket_timeout of 5s, so the read
+# times out at the same moment the blocking pop returns nil — the resulting
+# TimeoutError propagates out of the consumer and kills the socket (WS 1011).
+# Give the socket read generous headroom over the blocking pop.
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_URL],
+            "hosts": [
+                {
+                    "address": REDIS_URL,
+                    "socket_timeout": 30,
+                    "socket_connect_timeout": 10,
+                }
+            ],
             "symmetric_encryption_keys": [SECRET_KEY],
         },
     }

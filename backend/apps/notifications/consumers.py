@@ -9,6 +9,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from apps.accounts.models import User
 from apps.notifications.auth import verify_ws_token
 from apps.notifications.channels.websocket import group_name_for_recipient
+from apps.notifications.dashboard import group_name_for_tenant
 from apps.notifications.models import Notification
 
 logger = logging.getLogger(__name__)
@@ -88,3 +89,60 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             }
             for n in rows
         ]
+
+
+class DashboardConsumer(AsyncJsonWebsocketConsumer):
+    """Read-only live feed for the operator dashboard.
+
+    Authenticated with the dashboard's normal JWT access token (query `token`).
+    Joins a per-tenant group so every operator for that tenant sees the same
+    incident/notification events as they happen.
+    """
+
+    async def connect(self):
+        qs = parse_qs(self.scope["query_string"].decode())
+        token = (qs.get("token") or [None])[0]
+        if not token:
+            await self.close(code=4401)
+            return
+
+        try:
+            tenant_id = await self._tenant_for_token(token)
+        except TokenError:
+            await self.close(code=4401)
+            return
+
+        if tenant_id is None:
+            await self.close(code=4403)
+            return
+
+        self.group_name = group_name_for_tenant(tenant_id)
+        await self.channel_layer.group_add(self.group_name, self.channel_name)
+        await self.accept()
+        await self.send_json({"type": "ready", "tenant_id": str(tenant_id)})
+
+    async def disconnect(self, code):
+        if hasattr(self, "group_name"):
+            await self.channel_layer.group_discard(self.group_name, self.channel_name)
+
+    # ---- Channel-layer handler ----
+    async def dashboard_message(self, event):
+        await self.send_json({"type": "event", "event": event["event"]})
+
+    @database_sync_to_async
+    def _tenant_for_token(self, raw):
+        from rest_framework_simplejwt.tokens import AccessToken
+
+        from apps.tenants.models import TenantMember
+
+        token = AccessToken(raw)          # raises TokenError if invalid/expired
+        user_id = token.get("user_id")    # recipient ws-tokens have no user_id
+        if user_id is None:
+            return None
+        member = (
+            TenantMember.objects
+            .filter(user_id=user_id)
+            .select_related("tenant")
+            .first()
+        )
+        return member.tenant_id if member else None
