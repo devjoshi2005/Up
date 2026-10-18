@@ -1,5 +1,15 @@
 import http from 'k6/http';
-import { uuidv4 } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
+
+// Local RFC-4122 v4 UUID generator. We deliberately do NOT import
+// https://jslib.k6.io/... — CI/sandboxes are often offline, and a failed
+// remote import aborts the whole run at init time.
+function uuidv4() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 export const BASE_URL = __ENV.BASE_URL || 'http://localhost:8000';
 export const WS_URL   = __ENV.WS_URL   || 'ws://localhost:8000/ws/notifications';

@@ -3,7 +3,7 @@ services:
     image: postgres:15-alpine
     # Default max_connections=100 is tight once k6 (up to 80 VUs) + celery +
     # daphne all hold pooled connections.
-    command: ["postgres", "-c", "max_connections=300"]
+    command: ["postgres", "-c", "max_connections=300", "-c", "synchronous_commit=off"]
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
@@ -52,11 +52,10 @@ services:
     volumes:
       - ./backend:/app
     command: >
-      sh -c "python manage.py migrate &&
-             daphne -b 0.0.0.0 -p 8000 config.asgi:application"
+      sh -c "python manage.py migrate && gunicorn config.asgi:application -w ${GUNICORN_WORKERS:-4} -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 300 --graceful-timeout 30 --access-logfile -"
     healthcheck:
-      # /api/schema/ answers 401 without an API key — that still proves daphne is
-      # serving, so no `curl -f` (it would treat the 401 as a failure).
+      # /api/schema/ answers 401 without an API key — that still proves the ASGI
+      # server is serving, so no `curl -f` (it would treat the 401 as a failure).
       test: ["CMD-SHELL", "curl -sS -o /dev/null http://localhost:8000/api/schema/ || exit 1"]
       interval: 10s
       timeout: 5s

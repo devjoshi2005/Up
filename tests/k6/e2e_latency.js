@@ -14,11 +14,14 @@ export const options = {
   thresholds: { 'e2e_latency_ms': ['p(95)<800'] },
 };
 
-const token = fetchWsToken();
+// k6 v2 forbids HTTP in the init context, so fetch the WS token in setup().
+export function setup() {
+  return { token: fetchWsToken() };
+}
 
-export default function () {
+export default function (data) {
   // Each VU opens a WS, fires one event, waits for push
-  const url = `${WS_URL}/?token=${token}`;
+  const url = `${WS_URL}/?token=${data.token}`;
   const sentAt = Date.now();
 
   ws.connect(url, {}, function (socket) {
@@ -28,11 +31,15 @@ export default function () {
     socket.on('message', (msg) => {
       try {
         const data = JSON.parse(msg);
-        if (data.type === 'notification' || data.type === 'replay') {
-          const sent = data.payload?.sent_at || sentAt;
-          e2eLatency.add(Date.now() - sent);
-          socket.close();
-        }
+        // Only count a *live* push for the event THIS iteration fired.
+        // - type=replay is the consumer's connect-time backlog (old created_at).
+        // - backlog/requeued notifications (sweep_stuck_pending) also carry old
+        //   created_at values and would otherwise show as minutes/hours.
+        if (data.type !== 'notification') return;
+        const sent = data.payload?.sent_at || sentAt;
+        if (sent < sentAt - 2000) return;
+        e2eLatency.add(Date.now() - sent);
+        socket.close();
       } catch (_) {}
     });
     socket.setTimeout(() => socket.close(), 10000);

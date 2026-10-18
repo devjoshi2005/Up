@@ -17,5 +17,7 @@ COPY . .
 
 EXPOSE 8000
 
-# Default command (overridden in docker-compose for celery/beat)
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "config.asgi:application"]
+# Default command: Gunicorn with Uvicorn ASGI workers.
+# WebSocket still works because Channels uses the Redis channel layer.
+# Overridden in docker-compose for celery/beat.
+CMD gunicorn config.asgi:application -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --timeout 300 --graceful-timeout 30 --access-logfile -

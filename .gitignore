@@ -1,60 +1,54 @@
-# --- Secrets: never commit real env files ---
+# ---------------------------------------------------------------------------
+# Secrets — never commit real credentials.
+# Commit the *.example templates instead (they contain placeholders only).
+# ---------------------------------------------------------------------------
 .env
 .env.*
 !.env.example
+!.env.docker.example
 !.env.local.example
+*.pem
+*.key
+*.crt
 
-# --- Python ---
+# ---------------------------------------------------------------------------
+# Python / Django
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
 venv/
 .pytest_cache/
+.mypy_cache/
 .coverage
+.coverage.*
 htmlcov/
-backend/staticfiles/
+db.sqlite3
+*.log
+staticfiles/
+media/
 
-# --- Node / Next.js ---
+# ---------------------------------------------------------------------------
+# Celery beat runtime state (SQLite-ish shelve DB written at runtime)
+# ---------------------------------------------------------------------------
+celerybeat-schedule
+celerybeat-schedule-*
+
+# ---------------------------------------------------------------------------
+# Node / Next.js (the frontend also has its own frontend/.gitignore)
+# ---------------------------------------------------------------------------
 node_modules/
 frontend/.next/
 frontend/out/
+frontend/build/
+.turbo/
+*.tsbuildinfo
 
-# --- Editors / OS ---
+# ---------------------------------------------------------------------------
+# Editors / OS / tooling
+# ---------------------------------------------------------------------------
 .vscode/
 .idea/
 .DS_Store
-
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-*.egg-info/
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Django
-*.log
-db.sqlite3
-/media/
-/staticfiles/
-
-# Env
-.env
-.env.local
-.env.*.local
-
-# Node
-node_modules/
-.next/
-out/
-build/
-dist/
-
-# IDE
-.vscode/
-.idea/
-.DS_Store
-
-# Docker
 *.pid

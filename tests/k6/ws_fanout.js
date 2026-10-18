@@ -36,10 +36,14 @@ export const options = {
   },
 };
 
-const token = fetchWsToken();
+// k6 v2 forbids HTTP in the init context, so fetch the WS token in setup()
+// (runs once, shared by all VUs) instead of at module top level.
+export function setup() {
+  return { token: fetchWsToken() };
+}
 
-export default function () {
-  const url = `${WS_URL}/?token=${token}`;
+export default function (data) {
+  const url = `${WS_URL}/?token=${data.token}`;
   const t0 = Date.now();
   const res = ws.connect(url, {}, function (socket) {
     socket.on('open', () => {

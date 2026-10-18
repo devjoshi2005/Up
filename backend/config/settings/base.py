@@ -97,7 +97,12 @@ DATABASES = {
             "sslmode": config("DB_SSLMODE", default="require"),
             "connect_timeout": 10,
         },
-        "CONN_MAX_AGE": 60,                     # reuse connections
+        # Under ASGI, Django runs each sync request in a worker-pool thread, and
+        # each thread holds its own connection. With CONN_MAX_AGE>0 those pile up
+        # as idle connections and 80 concurrent clients can hit Postgres's
+        # "too many clients". Set DB_CONN_MAX_AGE=0 in the container (ideally run
+        # PgBouncer in front of Postgres for real deployments).
+        "CONN_MAX_AGE": config("DB_CONN_MAX_AGE", default=60, cast=int),
         "CONN_HEALTH_CHECKS": True,
     }
 }
